@@ -1,0 +1,18 @@
+Goal: Create a program which automatically slices vinyl-ripped wav files.
+
+Input: audio file, [optional] output dir, [[optional] time between tracks, [optional] number of tracks]
+Output: audio file sliced into pieces in output dir
+
+Using: python2, numpy (analysis), audiolab (io/processing)
+Algorithm:
+1. Determine silence threshold
+  - How: take as arg? parse out of first possible gap?
+  - Should it be amplitude or frequencies or both?
+2. Given a start point, locate start of next track/gap before next track
+  - Find transition points (using amplitude or frequency domain or both?)
+  - Select the earliest transition point that has some sec of "silence" prior
+3. Select from start point to start of second track, add to export list.
+4. Go to step 2 until file end.
+5. Export all files in export list.
+
+Possible future features: non-greedy, allowing for number of tracks and fewer false positives
