@@ -7,8 +7,26 @@ import argparse
 import numpy as np
 import scipy.io.wavfile as sp
 
-def get_amplitudes(filename, samples_per_slice, shift_per_slice):
-    (rate, d) = sp.read(filename, mmap=True)
+def samples_to_string(samples, rate, usems=False):
+    minutes = (st / rate) / 60
+    seconds = (st / rate) % 60
+    if (usems):
+        ms = ((st % rate) / (rate / 1000.))
+        return "%d:%02d:%03d" % (minutes, seconds, ms)
+    else:
+        return "%d:%02d" % (minutes, seconds)
+        
+def string_to_samples(s, rate):
+    items = s.split(":")
+    minutes = int(items[0])
+    seconds = int(items[1], base=10)
+    if (len(items) == 3):
+        ms = int(times[2])
+        return (minutes * rate * 60) + (seconds * rate) + int(ms * (rate / 1000.))
+    else:
+        return (minutes * rate * 60) + (seconds * rate)
+
+def get_amplitudes(d, rate, samples_per_slice, shift_per_slice):
     samples_per_slice = int(samples_per_slice * rate)
     shift_per_slice = int(shift_per_slice * rate)
     loc_max = len(d) - samples_per_slice
@@ -53,20 +71,20 @@ def find_track_gaps(d):
         interest = interest[:-1]
     return interest
 
-def process_audio_file(filename):
-    amps = get_amplitudes(filename, 1, 0.5)
+def process_audio_file(data, rate):
+    amps = get_amplitudes(data, rate, 1, 0.5)
     deltas = get_deltas(amps)
     track_pts = find_track_gaps(deltas)
     print "Found %d songs." % (len(track_pts) + 1)
     #pprint.pprint(track_pts)
-    song_starts = [i['end_sample'] - 22050 for i in track_pts]
+    pullback = rate / 2
+    song_starts = [i['end_sample'] - pullback for i in track_pts]
     return song_starts
 
-def chop_audio_file(filename, song_starts, save_dir):
+def chop_audio_file(data, rate, song_starts, save_dir):
     # Last item in song_starts should be the end of the last file
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    (rate, data) = sp.read(filename, mmap=True)
     for i in xrange(len(song_starts) + 1):
         filename = "%s/%03d.wav" % (save_dir, i)
         if (i == 0):
@@ -78,37 +96,21 @@ def chop_audio_file(filename, song_starts, save_dir):
         else:
             start = song_starts[-1]
             end = len(data)
-        print "Writing file %s: %02d:%02d to %02d:%02d..." % (
-            filename,
-            (start / 44100) / 60,
-            (start / 44100) % 60,
-            (end / 44100) / 60,
-            (end / 44100) % 60)
+        print "Writing file %s:%s to %s..." % (filename,
+            samples_to_string(state, rate), samples_to_string(end, rate))
         sp.write(filename, rate, data[start:end])
 
-def save_song_starts(filename, song_starts):
-    start_strings = []
-    for st in song_starts:
-        minutes = (st / 44100) / 60
-        seconds = (st / 44100) % 60
-        ms = ((st % 44100) / 44.1)
-        start_strings.append("%d:%02d:%03d" % (minutes, seconds, ms))
+def save_song_starts(filename, rate, song_starts):
+    start_strings = [samples_to_string(st, rate, usems=True) for st in song_starts]
     f = open(filename, 'w')
     json.dump(start_strings, f)
     f.close()
 
-def load_song_starts(filename):
+def load_song_starts(filename, rate):
     f = open(filename, 'r')
     start_strs = json.load(f)
     f.close();
-    starts = []
-    for st in start_strs:
-        times = st.split(":")
-        minutes = int(times[0])
-        seconds = int(times[1])
-        ms = int(times[2])
-        sample = (minutes * 44100 * 60) + (seconds * 44100) + int(ms * 44.1)
-        starts.append(sample)
+    starts = [string_to_samples(s) for s in start_strs]
     return starts
 
 if __name__ == "__main__":
@@ -126,12 +128,13 @@ if __name__ == "__main__":
                        help="chop file using given track start file")
     args = parser.parse_args()
 
+    (rate, data) = sp.read(args.infile, mmap=True)
     if args.detect:
-        starts = process_audio_file(args.infile)
-        save_song_starts(args.outfile, starts)
+        starts = process_audio_file(data, rate)
+        save_song_starts(args.outfile, rate, starts)
     elif args.chop is not None:
-        starts = load_song_starts(args.chop)
-        chop_audio_file(args.infile, starts, args.outfile)
+        starts = load_song_starts(args.chop, rate)
+        chop_audio_file(data, rate, starts, args.outfile)
     else:
-        starts = process_audio_file(args.infile)
-        chop_audio_file(args.infile, starts, args.outfile)
+        starts = process_audio_file(data)
+        chop_audio_file(data, rate, starts, args.outfile)
