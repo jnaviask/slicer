@@ -70,19 +70,18 @@ def process_audio_file(mono_data):
     track_pts = find_track_gaps(get_deltas(amps))
     print "Found %d tracks." % (len(track_pts))
     song_starts = find_track_beginnings(mono_data, track_pts)
+    song_starts.append(len(mono_data))
     return song_starts
 
 def chop_audio_file(data, song_starts, save_dir):
+    # Last item in song_starts should be the end of the last file
     if not os.path.exists(save_dir):
-        os.makrdirs(save_dir)
-    for i in xrange(len(song_starts) + 1):
+        os.makedirs(save_dir)
+    for i in xrange(len(song_starts)):
         filename = "%s/%03d.wav" % (save_dir, i)
         if (i == 0):
             start = 0
             end = song_starts[i]
-        elif (i == len(song_starts)):
-            start = song_starts[i-1]
-            end = len(data) - 1
         else:
             start = song_starts[i-1]
             end = song_starts[i]
@@ -95,29 +94,58 @@ def chop_audio_file(data, song_starts, save_dir):
         wavwrite(data[start:end], filename, 44100)
 
 def save_song_starts(filename, song_starts):
+    start_strings = []
+    for st in song_starts:
+        minutes = (st / 44100) / 60
+        seconds = (st / 44100) % 60
+        ms = ((st % 44100) / 44.1)
+        start_strings.append("%d:%02d:%03d" % (minutes, seconds, ms))
     f = open(filename, 'w')
-    json.dump(song_starts, f)
+    json.dump(start_strings, f)
     f.close()
 
 def load_song_starts(filename):
     f = open(filename, 'r')
-    return json.load(f)
+    start_strs = json.load(f)
+    f.close();
+    starts = []
+    for st in start_strs:
+        times = st.split(":")
+        minutes = int(times[0])
+        seconds = int(times[1])
+        ms = int(times[2])
+        sample = (minutes * 44100 * 60) + (seconds * 44100) + int(ms * 44.1)
+        starts.append(sample)
+    return starts
 
 def get_song_starts_from_file(filename):
     data = load_audio_file(filename)
     mono_data = prepare_audio_file(data)
     starts = process_audio_file(mono_data)
-    return starts
+    return (data, starts)
 
-parser = argparse.ArgumentParser(description="chop vinyl-ripped audio files")
-parser.add_argument("in-file", help="input audio file")
-parser.add_argument("out-file",
-                    help="output filename (for -d) or directory")
-group = parser.add_mutually_exclusive_group()
-group.add_argument("-d", "--detect",
-                    help="detect track starts and write to file",
-                    action="store_true")
-group.add_argument("-c", "--chop", type=str,
-                    help="chop file using given track start file")
-args = parser.parse_args()
-print args
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="slice vinyl rips into individual tracks")
+    parser.add_argument("infile", help="input audio file")
+    parser.add_argument("outfile",
+                        help="output filename (for -d) or directory")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-d", "--detect",
+                       help="detect track starts and write to file",
+                       action="store_true")
+    group.add_argument("-c", "--chop", type=str,
+                       metavar="slice-file",
+                       help="chop file using given track start file")
+    args = parser.parse_args()
+
+    if args.detect:
+        (data, starts) = get_song_starts_from_file(args.infile)
+        save_song_starts(args.outfile, starts)
+    elif args.chop is not None:
+        starts = load_song_starts(args.chop)
+        chop_audio_file(load_audio_file(args.infile),
+                        starts, args.outfile)
+    else:
+        (data, starts) = get_song_starts_from_file(args.infile)
+        chop_audio_file(data, starts, args.outfile)
