@@ -35,7 +35,7 @@ def get_deltas(amps):
 def find_track_gaps(d):
     large_delta = 300
     small_delta = 300
-    small_amp = 1300
+    small_amp = 800
     min_interest_distance = 60 * 44100
     interest = []
     for i in xrange(len(d) - 1):
@@ -58,6 +58,7 @@ def process_audio_file(filename):
     deltas = get_deltas(amps)
     track_pts = find_track_gaps(deltas)
     print "Found %d songs." % (len(track_pts) + 1)
+    #pprint.pprint(track_pts)
     song_starts = [i['end_sample'] - 22050 for i in track_pts]
     return song_starts
 
