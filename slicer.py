@@ -8,10 +8,10 @@ import numpy as np
 import scipy.io.wavfile as sp
 
 def samples_to_string(samples, rate, usems=False):
-    minutes = (st / rate) / 60
-    seconds = (st / rate) % 60
+    minutes = (samples / rate) / 60
+    seconds = (samples / rate) % 60
     if (usems):
-        ms = ((st % rate) / (rate / 1000.))
+        ms = ((samples % rate) / (rate / 1000.))
         return "%d:%02d:%03d" % (minutes, seconds, ms)
     else:
         return "%d:%02d" % (minutes, seconds)
@@ -50,31 +50,59 @@ def get_deltas(amps):
         })
     return deltas
 
-def find_track_gaps(d):
-    large_delta = 300
-    small_delta = 300
-    small_amp = 800
-    min_interest_distance = 60 * 44100
-    interest = []
-    for i in xrange(len(d) - 1):
-        gap = d[i]
-        chg = d[i+1]
-        if (abs(gap['delta']) < small_delta and chg['delta'] > large_delta and
-            ((gap['start_val'] + gap['end_val']) / 2) < small_amp and
-            ((len(interest) == 0 and
-              gap['start_sample'] >= min_interest_distance) or
-             (interest[-1]['end_sample'] + min_interest_distance <=
-              gap['end_sample']))):
-            interest.append(gap)
-    final_sample = d[-1]['end_sample']
-    if (final_sample - interest[-1]['end_sample'] < min_interest_distance):
-        interest = interest[:-1]
-    return interest
-
-def process_audio_file(data, rate):
+def find_track_gaps(d, rate, num_gaps=None):
+    min_song_len = rate * 60
+    gaps = []
+    small_delta_scale = 2
+    large_delta_scale = 1. / 2
+    small_amp_scale = 800
+    # This messy piece of crap filter the thing.
+    time_per_gap = d[0]['end_sample'] - d[0]['start_sample']
+    gaps_to_remove = min_song_len / time_per_gap
+    dr = d[gaps_to_remove:len(d) - gaps_to_remove]
+    dr_low_amp = [dr[i] for i in xrange(len(dr) - 1) if (dr[i]['start_val'] + dr[i]['end_val'] / 2) < small_amp_scale or (dr[i-1]['start_val'] + dr[i-1]['end_val']) / 2 < small_amp_scale]
+    max_delta = max(dr_low_amp, key=lambda x: x['delta'])['delta']
+    min_delta = abs(min(dr_low_amp, key=lambda x: abs(x['delta']))['delta'])
+    #print max_delta, min_delta
+    for i in xrange(len(dr_low_amp) - 1):
+        gap = dr_low_amp[i]
+        chg = dr_low_amp[i+1]
+        # goal: gap has small delta, chg has large delta
+        #     gap has small amplitude, chg has large amplitude
+        score = abs(gap['delta']) / min_delta + max_delta / chg['delta']
+        gaps.append({'gap': gap, 'chg': chg, 'score': score})
+    results = []
+    if (num_gaps is None):
+        # make arbitrary bounds
+        large_delta = 300
+        small_delta = 300
+        small_amp = 800
+        for i in gaps:
+            if (abs(i['gap']['delta']) < small_delta and
+                    i['chg']['delta'] > large_delta and
+                    (gap['start_val'] + gap['end_val'] / 2) < small_amp and
+                    (len(results) == 0 or
+                        (results[-1]['end_sample'] + min_song_len
+                            < i['gap']['start_sample']))):
+                results.append(i['gap'])
+        return results
+    else:
+        sorted_gaps = sorted(gaps, key=lambda x: x['score'], reverse=True)
+        idx = 0
+        while (len(results) < num_gaps - 1):
+            item = sorted_gaps[idx]['gap']
+            far_enough = [(abs(item['end_sample'] - x['end_sample'])
+                           > min_song_len) for x in results]
+            if (all(far_enough)):
+                #print "Found gap at idx", idx
+                results.append(item)
+            idx += 1
+        return sorted(results, key=lambda x: x['start_sample'])
+    
+def process_audio_file(data, rate, num_gaps=None):
     amps = get_amplitudes(data, rate, 1, 0.5)
     deltas = get_deltas(amps)
-    track_pts = find_track_gaps(deltas)
+    track_pts = find_track_gaps(deltas, rate, num_gaps=num_gaps)
     print "Found %d songs." % (len(track_pts) + 1)
     #pprint.pprint(track_pts)
     pullback = rate / 2
@@ -97,7 +125,7 @@ def chop_audio_file(data, rate, song_starts, save_dir):
             start = song_starts[-1]
             end = len(data)
         print "Writing file %s:%s to %s..." % (filename,
-            samples_to_string(state, rate), samples_to_string(end, rate))
+            samples_to_string(start, rate), samples_to_string(end, rate))
         sp.write(filename, rate, data[start:end])
 
 def save_song_starts(filename, rate, song_starts):
@@ -126,15 +154,17 @@ if __name__ == "__main__":
     group.add_argument("-c", "--chop", type=str,
                        metavar="slice-file",
                        help="chop file using given track start file")
+    parser.add_argument("-t", "--tracks", type=int, metavar="num-tracks",
+                        help="number of tracks in input file")
     args = parser.parse_args()
 
     (rate, data) = sp.read(args.infile, mmap=True)
     if args.detect:
-        starts = process_audio_file(data, rate)
+        starts = process_audio_file(data, rate, num_gaps=args.tracks)
         save_song_starts(args.outfile, rate, starts)
     elif args.chop is not None:
         starts = load_song_starts(args.chop, rate)
         chop_audio_file(data, rate, starts, args.outfile)
     else:
-        starts = process_audio_file(data)
+        starts = process_audio_file(data, rate, num_gaps=args.tracks)
         chop_audio_file(data, rate, starts, args.outfile)
