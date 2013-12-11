@@ -23,7 +23,7 @@ def string_to_samples(s, rate):
     minutes = int(items[0])
     seconds = int(items[1], base=10)
     if (len(items) == 3):
-        ms = int(times[2])
+        ms = int(items[2])
         return (minutes * rate * 60) + (seconds * rate) + int(ms * (rate / 1000.))
     else:
         return (minutes * rate * 60) + (seconds * rate)
@@ -54,13 +54,14 @@ def find_gaps(amps, num=None, threshold=800, max_song_len=(44100*60)):
         return sorted(sorted(gaps, key=lambda x: x['mean'])[0:num],
                       key=lambda x: x['start'])
 
-def gap_shift(data, rate, gaps, shift=0.1, scale=1.5, pullback=0.5):
+def gap_shift(data, rate, gaps, shift=0.2, scale=1.6, pullback=0.5):
     results = []
-    maxgap = max(gaps, key=lambda x: x['mean'])['mean'] * scale
-    for gap in gaps:
+    maxgap = np.mean([x['mean'] for x in gaps]) * scale
+    for i in xrange(len(gaps)):
+        gap = gaps[i]
         start = gap['end'] + rate * shift
         end = 0
-        while end == 0 or next_vol < maxgap * scale:
+        while end == 0 or next_vol < maxgap:
             end = start + rate * shift
             next_vol = np.mean(abs(np.mean(data[start:end], 1)))
             start += rate * shift
@@ -69,13 +70,17 @@ def gap_shift(data, rate, gaps, shift=0.1, scale=1.5, pullback=0.5):
 
 def process_audio_file(data, rate, num_gaps=None):
     max_song_len = rate * 60
+    if verbose: print "Getting amplitudes..."
     amps = get_amplitudes(data, rate, 2, 1)
+    if verbose: print "Done!"
+    if verbose: print "Finding gaps..."
     gaps = find_gaps(amps, num=num_gaps, max_song_len=max_song_len)
     if (gaps[-1]['end'] + max_song_len > len(data)):
         gaps = gaps[0:len(gaps) - 1]
+    print "Found %d songs." % (len(gaps) + 1)
+    if verbose: print "Shifting gaps..."
     track_pts = gap_shift(data, rate, gaps)
-    print "Found %d songs." % (len(track_pts) + 1)
-    if verbose: pprint.pprint(track_pts)
+    if verbose: print "Done!"
     return track_pts
 
 def chop_audio_file(data, rate, song_starts, save_dir):
@@ -107,7 +112,7 @@ def load_song_starts(filename, rate):
     f = open(filename, 'r')
     start_strs = json.load(f)
     f.close();
-    starts = [string_to_samples(s) for s in start_strs]
+    starts = [string_to_samples(s, rate) for s in start_strs]
     return starts
 
 if __name__ == "__main__":
@@ -115,27 +120,28 @@ if __name__ == "__main__":
         description="slice vinyl rips into individual tracks")
     parser.add_argument("infile", help="input audio file")
     parser.add_argument("outfile",
-                        help="output filename (for -d) or directory")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("-d", "--detect", action="store_true",
-                       help="detect track starts and write to file")
-    group.add_argument("-c", "--chop", type=str,
-                       metavar="slice-file",
-                       help="chop file using given track start file")
+                        help="output directory")
     parser.add_argument("-t", "--tracks", type=int, metavar="num-tracks",
                         help="number of tracks in input file")
+    parser.add_argument("-nc", "--no-chop", action="store_true",
+                       help="do not slice up file")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-d", "--dump", type=str, metavar="filename",
+                       help="dump track starts to file")
+    group.add_argument("-l", "--load-slices", type=str, metavar="filename",
+                       help="load slices from file instead of detecting them")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="toggle more verbose output")
     args = parser.parse_args()
 
     verbose = args.verbose
     (rate, data) = sp.read(args.infile, mmap=True)
-    if args.detect:
+    if args.dump is not None:
         starts = process_audio_file(data, rate, num_gaps=args.tracks)
-        save_song_starts(args.outfile, rate, starts)
-    elif args.chop is not None:
-        starts = load_song_starts(args.chop, rate)
-        chop_audio_file(data, rate, starts, args.outfile)
+        save_song_starts(args.dump, rate, starts)
+    elif args.load_slices is not None:
+        starts = load_song_starts(args.load_slices, rate)
     else:
         starts = process_audio_file(data, rate, num_gaps=args.tracks)
+    if (not args.no_chop):
         chop_audio_file(data, rate, starts, args.outfile)
