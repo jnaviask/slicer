@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import argparse
+import string
 
 import numpy as np
 import scipy.io.wavfile as sp
@@ -76,7 +77,7 @@ def find_gaps(amps, num=None, threshold=800, max_song_len=(44100*60)):
         return sorted(sorted(gaps, key=lambda x: x['mean'])[0:num],
                       key=lambda x: x['start'])
 
-def gap_shift(data, rate, gaps, shift=0.2, scale=1.6, pullback=0.5):
+def gap_shift(data, rate, gaps, shift=0.2, scale=1.6, pullback=0.1):
     """
     Given the song data, sampling rate, and a list of approximate detected 
     gaps that need to be moved forward (such that gaps are at the end of 
@@ -109,7 +110,7 @@ def process_audio_file(data, rate, num_gaps=None):
     Given an audio file at a sampling rate with an optionally specified 
     number of tracks, returns a list of track starts suitable for slicing.
     """
-    max_song_len = rate * 60
+    max_song_len = rate * 90
     if verbose: print "Getting amplitudes..."
     amps = get_amplitudes(data, rate, 2, 1)
     if verbose: print "Done!"
@@ -176,29 +177,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="slice vinyl rips into individual tracks")
     parser.add_argument("infile", help="input audio file")
-    parser.add_argument("outfile",
-                        help="output directory")
     parser.add_argument("-t", "--tracks", type=int, metavar="num-tracks",
                         help="number of tracks in input file")
-    parser.add_argument("-nc", "--no-chop", action="store_true",
-                       help="do not slice up file")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-d", "--dump", type=str, metavar="filename",
-                       help="dump track starts to file")
-    group.add_argument("-l", "--load-slices", type=str, metavar="filename",
+    group.add_argument("-d", "--dump", action="store_true",
+                       help="dump track starts to file (does not slice)")
+    group.add_argument("-l", "--load-slices", action="store_true",
                        help="load slices from file instead of detecting them")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="toggle more verbose output")
     args = parser.parse_args()
 
     verbose = args.verbose
+    dumpfile = string.replace(args.infile, ".wav", ".txt")
+    outfolder = string.replace(args.infile, ".wav", "")
     (rate, data) = sp.read(args.infile, mmap=True)
     if args.dump is not None:
         starts = process_audio_file(data, rate, num_gaps=args.tracks)
-        save_song_starts(args.dump, rate, starts)
-    elif args.load_slices is not None:
-        starts = load_song_starts(args.load_slices, rate)
+        save_song_starts(dumpfile, rate, starts)
     else:
-        starts = process_audio_file(data, rate, num_gaps=args.tracks)
-    if (not args.no_chop):
-        chop_audio_file(data, rate, starts, args.outfile)
+        if args.load_slices is not None:
+            starts = load_song_starts(dumpfile, rate)
+        else:
+            starts = process_audio_file(data, rate, num_gaps=args.tracks)
+        chop_audio_file(data, rate, starts, outfolder)
