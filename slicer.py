@@ -8,6 +8,8 @@ import string
 import numpy as np
 import scipy.io.wavfile as sp
 
+# TODO: Add a low-pass filter!
+
 verbose = True
 
 def samples_to_string(samples, rate, usems=False):
